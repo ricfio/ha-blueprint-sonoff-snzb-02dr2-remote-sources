@@ -1,5 +1,5 @@
 # SONOFF SNZB-02DR2 (Zigbee2MQTT) - Remote Sources
-# Version: 1.0.0
+# Version: 1.1.0
 #
 # Author: Riccardo Fiorenza (ricfio)
 # Repository: https://github.com/ricfio/ha-blueprint-sonoff-snzb-02dr2-remote-sources
@@ -7,6 +7,7 @@
 # SPDX-License-Identifier: MIT
 #
 # Changelog
+#   1.1.0  Coalesce source changes, validate units, and restore item state consistently.
 #   1.0.0  First release.
 
 blueprint:
@@ -36,13 +37,15 @@ blueprint:
       documentation, new values are applied at its next check-in (the screen refreshes
       from the remote sources every 30 minutes) or immediately after briefly pressing
       the button on its back.
-    - A reading is sent only if it is valid: numeric, within range (temperature -20 to
-      60 °C, humidity 0 to 100 %) and not older than the configured maximum age.
-      Fahrenheit and Kelvin sources are converted to °C.
-    - All configured sources are sent on every run, so a change on any of them refreshes
-      the whole display.
+    - A reading is sent only if it is numeric, uses a supported unit, is within range
+      (temperature -20 to 60 °C, humidity 0 to 100 %) and is not older than the configured
+      maximum age. Fahrenheit and Kelvin temperatures are converted to °C.
+    - Source changes are debounced and the latest values are evaluated after the quiet
+      period; periodic refresh and Home Assistant startup send without that delay.
+    - Invalid readings use the configured per-item fallback. When enabled, `online` is
+      published immediately before a valid value.
 
-    **Version:** 1.0.0
+    **Version:** 1.1.0
   domain: automation
   author: ricfio
   source_url: https://github.com/ricfio/ha-blueprint-sonoff-snzb-02dr2-remote-sources/blob/main/blueprints/automation/sonoff-snzb-02dr2-remote-sources.yaml
@@ -203,10 +206,11 @@ blueprint:
                 - label: Every 30 minutes
                   value: "/30"
         throttle_seconds:
-          name: Minimum interval between runs
+          name: Source update debounce
           description: >-
-            Avoids flooding Zigbee when the sources change constantly. Skipped runs are
-            recovered by the periodic refresh.
+            Waits for this many seconds of quiet after a source state change, then sends
+            the latest values. Further changes restart the wait, so the final useful
+            update is not discarded. Periodic refresh and startup are sent immediately.
           default: 60
           selector:
             number:
@@ -254,9 +258,9 @@ blueprint:
         restore_online:
           name: Restore "online" when a source is valid again
           description: >-
-            For items with an active fallback (offline/unbound), writes `online` to the
-            item's `source_N_*_state` just before writing its value. Adds one message per
-            item on every run. Leave off if the display recovers on its own.
+            Writes `online` to the configured item's `source_N_*_state` immediately
+            before its valid value. State-only updates do not erase the measurement.
+            Adds one message for each valid configured item.
           default: false
           selector:
             boolean:
@@ -287,7 +291,7 @@ blueprint:
               unit_of_measurement: s
               mode: slider
 
-mode: single
+mode: restart
 max_exceeded: silent
 
 variables:
@@ -345,14 +349,14 @@ conditions:
          or trigger.event.data.old_state is none
          or trigger.event.data.new_state is none
          or trigger.event.data.new_state.state != trigger.event.data.old_state.state }}
-  - alias: Respect the minimum interval between runs
-    condition: template
-    value_template: >-
-      {% set last = this.attributes.last_triggered %}
-      {{ last is none
-         or (now() - last).total_seconds() >= throttle_seconds | int(0) }}
-
 actions:
+  - alias: Coalesce source changes and use the latest state
+    if:
+      - condition: template
+        value_template: "{{ trigger.id == 'source_changed' and throttle_seconds | int(0) > 0 }}"
+    then:
+      - delay:
+          seconds: "{{ throttle_seconds | int(0) }}"
   - alias: Optionally set remote_source_status to "using"
     if:
       - condition: template
@@ -387,42 +391,45 @@ actions:
             # Effective fallback of each item: per-item override or the default
             t_fallback: "{{ fallback_mode if repeat.item.t_fb == 'default' else repeat.item.t_fb }}"
             h_fallback: "{{ fallback_mode if repeat.item.h_fb == 'default' else repeat.item.h_fb }}"
-            # Temperature in °C (converted from °F or K); empty string if not valid
+            # Convert only recognized temperature units; unknown or missing units are invalid.
             t_c: >-
               {%- if t_ent | string | length > 0 and is_number(states(t_ent)) -%}
                 {%- set v = states(t_ent) | float -%}
-                {%- set u = state_attr(t_ent, 'unit_of_measurement') -%}
-                {%- if u == '°F' -%}{{ ((v - 32) * 5 / 9) | round(1) }}
+                {%- set u = state_attr(t_ent, 'unit_of_measurement') | string | trim -%}
+                {%- if u in ['°C', '℃'] -%}{{ v | round(1) }}
+                {%- elif u in ['°F', '℉'] -%}{{ ((v - 32) * 5 / 9) | round(1) }}
                 {%- elif u == 'K' -%}{{ (v - 273.15) | round(1) }}
-                {%- else -%}{{ v | round(1) }}{%- endif -%}
+                {%- endif -%}
               {%- endif -%}
-            # Humidity in % (capped at 99.9)
+            t_unit: "{{ state_attr(t_ent, 'unit_of_measurement') | string | trim }}"
+            h_unit: "{{ state_attr(h_ent, 'unit_of_measurement') | string | trim }}"
+            # Humidity is accepted only when its unit is percent.
             h_c: >-
-              {%- if h_ent | string | length > 0 and is_number(states(h_ent)) -%}
+              {%- if h_ent | string | length > 0 and is_number(states(h_ent)) and h_unit == '%' -%}
                 {{ [states(h_ent) | float | round(1), 99.9] | min }}
               {%- endif -%}
-            # Age of the last report in minutes
+            # Age of last_reported (not last_changed), preserving sub-minute precision.
             t_age: >-
               {%- if t_ent | string | length == 0 or states[t_ent] is none -%}
                 999999
               {%- else -%}
-                {{ ((now() - states[t_ent].last_reported).total_seconds() / 60) | round(0) }}
+                {{ (now() - states[t_ent].last_reported).total_seconds() / 60 }}
               {%- endif -%}
             h_age: >-
               {%- if h_ent | string | length == 0 or states[h_ent] is none -%}
                 999999
               {%- else -%}
-                {{ ((now() - states[h_ent].last_reported).total_seconds() / 60) | round(0) }}
+                {{ (now() - states[h_ent].last_reported).total_seconds() / 60 }}
               {%- endif -%}
             # skip = not configured, ok = valid, invalid = configured but not usable
             t_status: >-
               {%- if t_ent | string | length == 0 -%}skip
-              {%- elif t_c != '' and -20 <= t_c | float <= 60
+              {%- elif t_c != '' and t_unit in ['°C', '℃', '°F', '℉', 'K'] and -20 <= t_c | float <= 60
                        and (stale_minutes | int(0) == 0 or t_age | float <= stale_minutes | int(0)) -%}ok
               {%- else -%}invalid{%- endif -%}
             h_status: >-
               {%- if h_ent | string | length == 0 -%}skip
-              {%- elif h_c != '' and 0 <= h_c | float and states(h_ent) | float <= 100
+              {%- elif h_c != '' and h_unit == '%' and 0 <= states(h_ent) | float <= 100
                        and (stale_minutes | int(0) == 0 or h_age | float <= stale_minutes | int(0)) -%}ok
               {%- else -%}invalid{%- endif -%}
         - alias: Temperature
@@ -433,7 +440,7 @@ actions:
               sequence:
                 - if:
                     - condition: template
-                      value_template: "{{ restore_online and t_fallback != 'none' }}"
+                      value_template: "{{ restore_online }}"
                   then:
                     - action: mqtt.publish
                       data:
@@ -471,7 +478,7 @@ actions:
               sequence:
                 - if:
                     - condition: template
-                      value_template: "{{ restore_online and h_fallback != 'none' }}"
+                      value_template: "{{ restore_online }}"
                   then:
                     - action: mqtt.publish
                       data:
