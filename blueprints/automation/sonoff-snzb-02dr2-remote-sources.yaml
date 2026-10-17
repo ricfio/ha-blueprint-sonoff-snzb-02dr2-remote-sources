@@ -1,0 +1,503 @@
+# SONOFF SNZB-02DR2 (Zigbee2MQTT) - Remote Sources
+# Version: 1.0.0
+#
+# Author: Riccardo Fiorenza (ricfio)
+# Repository: https://github.com/ricfio/ha-blueprint-sonoff-snzb-02dr2-remote-sources
+# License: MIT
+# SPDX-License-Identifier: MIT
+#
+# Changelog
+#   1.0.0  First release.
+
+blueprint:
+  name: SONOFF SNZB-02DR2 (Zigbee2MQTT) - Remote Sources
+  description: |
+    Sends the temperature and/or humidity of up to two other sensors to the
+    **SONOFF SNZB-02DR2 (AirGuard TH)** so they are shown on its display.
+
+    **How it works**
+    The display has two independent remote slots: slot 1 is shown as **EXT1** and
+    slot 2 as **EXT2**, and they can be used together. For each slot you can pick a
+    temperature sensor, a humidity sensor, or both (each one is optional). Every value
+    is written in its own MQTT message (`source_N_temperature` / `source_N_humidity`)
+    with a short pause in between.
+
+    **Requirements**
+    - Zigbee2MQTT exposing `source_N_*` properties for the display
+    - MQTT integration enabled in Home Assistant
+    - Home Assistant 2024.10 or later
+    - SONOFF SNZB-02DR2 firmware 1.0.5 or later (first version with the two remote sources)
+
+    **Tested with**
+    - SONOFF SNZB-02DR2 firmware 1.0.5 (other firmware versions have not been tested)
+
+    **Notes**
+    - The display is a battery-powered sleepy device. According to the Zigbee2MQTT
+      documentation, new values are applied at its next check-in (the screen refreshes
+      from the remote sources every 30 minutes) or immediately after briefly pressing
+      the button on its back.
+    - A reading is sent only if it is valid: numeric, within range (temperature -20 to
+      60 °C, humidity 0 to 100 %) and not older than the configured maximum age.
+      Fahrenheit and Kelvin sources are converted to °C.
+    - All configured sources are sent on every run, so a change on any of them refreshes
+      the whole display.
+
+    **Version:** 1.0.0
+  domain: automation
+  author: ricfio
+  source_url: https://github.com/ricfio/ha-blueprint-sonoff-snzb-02dr2-remote-sources/blob/main/blueprints/automation/sonoff-snzb-02dr2-remote-sources.yaml
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    display_section:
+      name: Display
+      icon: mdi:monitor-dashboard
+      collapsed: false
+      input:
+        display_name:
+          name: Zigbee2MQTT name of the display
+          description: >-
+            The friendly_name of the SNZB-02DR2 in Zigbee2MQTT, exactly as it appears
+            there (case-sensitive).
+          selector:
+            text:
+        base_topic:
+          name: MQTT base topic
+          description: The Zigbee2MQTT base_topic. Keep the default unless you changed it.
+          default: zigbee2mqtt
+          selector:
+            text:
+    ext1_section:
+      name: EXT1 (remote slot 1)
+      icon: mdi:numeric-1-box-outline
+      collapsed: false
+      input:
+        temp_entity_1:
+          name: EXT1 temperature sensor
+          description: Leave empty if you do not want to send a temperature to EXT1.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: temperature
+        temp_fallback_1:
+          name: EXT1 temperature fallback
+          description: What to write if the EXT1 temperature source is not valid.
+          default: default
+          selector:
+            select:
+              mode: list
+              options:
+                - label: Use the default fallback
+                  value: default
+                - label: Do nothing
+                  value: none
+                - label: Mark offline
+                  value: offline
+                - label: Unbind
+                  value: unbound
+        hum_entity_1:
+          name: EXT1 humidity sensor
+          description: Leave empty if you do not want to send a humidity to EXT1.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: humidity
+        hum_fallback_1:
+          name: EXT1 humidity fallback
+          description: What to write if the EXT1 humidity source is not valid.
+          default: default
+          selector:
+            select:
+              mode: list
+              options:
+                - label: Use the default fallback
+                  value: default
+                - label: Do nothing
+                  value: none
+                - label: Mark offline
+                  value: offline
+                - label: Unbind
+                  value: unbound
+    ext2_section:
+      name: EXT2 (remote slot 2)
+      icon: mdi:numeric-2-box-outline
+      collapsed: false
+      input:
+        temp_entity_2:
+          name: EXT2 temperature sensor
+          description: Leave empty if you do not want to send a temperature to EXT2.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: temperature
+        temp_fallback_2:
+          name: EXT2 temperature fallback
+          description: What to write if the EXT2 temperature source is not valid.
+          default: default
+          selector:
+            select:
+              mode: list
+              options:
+                - label: Use the default fallback
+                  value: default
+                - label: Do nothing
+                  value: none
+                - label: Mark offline
+                  value: offline
+                - label: Unbind
+                  value: unbound
+        hum_entity_2:
+          name: EXT2 humidity sensor
+          description: Leave empty if you do not want to send a humidity to EXT2.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: humidity
+        hum_fallback_2:
+          name: EXT2 humidity fallback
+          description: What to write if the EXT2 humidity source is not valid.
+          default: default
+          selector:
+            select:
+              mode: list
+              options:
+                - label: Use the default fallback
+                  value: default
+                - label: Do nothing
+                  value: none
+                - label: Mark offline
+                  value: offline
+                - label: Unbind
+                  value: unbound
+    timing_section:
+      name: Update frequency
+      icon: mdi:timer-cog-outline
+      collapsed: true
+      input:
+        refresh_pattern:
+          name: Periodic refresh
+          description: >-
+            Resends the values at regular intervals, even without changes. Keeps the
+            display aligned and recovers from skipped updates.
+          default: "/30"
+          selector:
+            select:
+              mode: dropdown
+              options:
+                - label: Every 5 minutes
+                  value: "/5"
+                - label: Every 10 minutes
+                  value: "/10"
+                - label: Every 15 minutes
+                  value: "/15"
+                - label: Every 20 minutes
+                  value: "/20"
+                - label: Every 30 minutes
+                  value: "/30"
+        throttle_seconds:
+          name: Minimum interval between runs
+          description: >-
+            Avoids flooding Zigbee when the sources change constantly. Skipped runs are
+            recovered by the periodic refresh.
+          default: 60
+          selector:
+            number:
+              min: 0
+              max: 240
+              step: 10
+              unit_of_measurement: s
+              mode: slider
+    safety_section:
+      name: Safety and fallback
+      icon: mdi:shield-check-outline
+      collapsed: true
+      input:
+        stale_minutes:
+          name: Maximum age of a source reading
+          description: >-
+            If a source sensor has not reported for longer than this, its value is
+            considered unreliable. Set to 0 to disable the check.
+          default: 120
+          selector:
+            number:
+              min: 0
+              max: 720
+              step: 10
+              unit_of_measurement: min
+              mode: box
+        fallback_mode:
+          name: Default fallback when a source reading is not valid
+          description: >-
+            Applies only to the affected item (for example EXT1 temperature).
+            "Mark offline" writes `offline` to its `source_N_*_state`; "Unbind" writes
+            `unbound`. How the display renders these states depends on the firmware.
+            Each item can override this in the EXT1 / EXT2 sections.
+          default: none
+          selector:
+            select:
+              mode: list
+              options:
+                - label: Do nothing
+                  value: none
+                - label: Mark offline
+                  value: offline
+                - label: Unbind
+                  value: unbound
+        restore_online:
+          name: Restore "online" when a source is valid again
+          description: >-
+            For items with an active fallback (offline/unbound), writes `online` to the
+            item's `source_N_*_state` just before writing its value. Adds one message per
+            item on every run. Leave off if the display recovers on its own.
+          default: false
+          selector:
+            boolean:
+    advanced_section:
+      name: Advanced
+      icon: mdi:cog-outline
+      collapsed: true
+      input:
+        set_status_using:
+          name: Also set remote_source_status to "using"
+          description: >-
+            Off by default: only the temperature/humidity values are written.
+            Enable it only if the display does not show the values on its own.
+          default: false
+          selector:
+            boolean:
+        write_delay:
+          name: Pause between writes
+          description: >-
+            Seconds to wait between two consecutive messages sent to the display.
+            Avoids a write overriding the previous one.
+          default: 2
+          selector:
+            number:
+              min: 0
+              max: 10
+              step: 1
+              unit_of_measurement: s
+              mode: slider
+
+mode: single
+max_exceeded: silent
+
+variables:
+  display_name: !input display_name
+  base_topic: !input base_topic
+  temp_entity_1: !input temp_entity_1
+  hum_entity_1: !input hum_entity_1
+  temp_entity_2: !input temp_entity_2
+  hum_entity_2: !input hum_entity_2
+  stale_minutes: !input stale_minutes
+  throttle_seconds: !input throttle_seconds
+  fallback_mode: !input fallback_mode
+  restore_online: !input restore_online
+  temp_fallback_1: !input temp_fallback_1
+  hum_fallback_1: !input hum_fallback_1
+  temp_fallback_2: !input temp_fallback_2
+  hum_fallback_2: !input hum_fallback_2
+  set_status_using: !input set_status_using
+  write_delay: !input write_delay
+  set_topic: "{{ base_topic | trim('/') }}/{{ display_name | trim('/') }}/set"
+
+triggers:
+  - trigger: event
+    event_type: state_changed
+    event_data:
+      entity_id: !input temp_entity_1
+    id: source_changed
+  - trigger: event
+    event_type: state_changed
+    event_data:
+      entity_id: !input hum_entity_1
+    id: source_changed
+  - trigger: event
+    event_type: state_changed
+    event_data:
+      entity_id: !input temp_entity_2
+    id: source_changed
+  - trigger: event
+    event_type: state_changed
+    event_data:
+      entity_id: !input hum_entity_2
+    id: source_changed
+  - trigger: time_pattern
+    minutes: !input refresh_pattern
+    id: periodic
+  - trigger: homeassistant
+    event: start
+    id: startup
+
+conditions:
+  - alias: Only react to state changes (not attribute changes)
+    condition: template
+    value_template: >-
+      {{ trigger.id != 'source_changed'
+         or trigger.event.data.old_state is none
+         or trigger.event.data.new_state is none
+         or trigger.event.data.new_state.state != trigger.event.data.old_state.state }}
+  - alias: Respect the minimum interval between runs
+    condition: template
+    value_template: >-
+      {% set last = this.attributes.last_triggered %}
+      {{ last is none
+         or (now() - last).total_seconds() >= throttle_seconds | int(0) }}
+
+actions:
+  - alias: Optionally set remote_source_status to "using"
+    if:
+      - condition: template
+        value_template: "{{ set_status_using }}"
+    then:
+      - action: mqtt.publish
+        data:
+          topic: "{{ set_topic }}"
+          qos: 1
+          retain: false
+          payload: '{"remote_source_status": "using"}'
+      - delay:
+          seconds: "{{ write_delay }}"
+  - alias: Process each remote slot
+    repeat:
+      for_each:
+        - slot: 1
+          temp: "{{ temp_entity_1 }}"
+          hum: "{{ hum_entity_1 }}"
+          t_fb: "{{ temp_fallback_1 }}"
+          h_fb: "{{ hum_fallback_1 }}"
+        - slot: 2
+          temp: "{{ temp_entity_2 }}"
+          hum: "{{ hum_entity_2 }}"
+          t_fb: "{{ temp_fallback_2 }}"
+          h_fb: "{{ hum_fallback_2 }}"
+      sequence:
+        - variables:
+            slot: "{{ repeat.item.slot }}"
+            t_ent: "{{ repeat.item.temp }}"
+            h_ent: "{{ repeat.item.hum }}"
+            # Effective fallback of each item: per-item override or the default
+            t_fallback: "{{ fallback_mode if repeat.item.t_fb == 'default' else repeat.item.t_fb }}"
+            h_fallback: "{{ fallback_mode if repeat.item.h_fb == 'default' else repeat.item.h_fb }}"
+            # Temperature in °C (converted from °F or K); empty string if not valid
+            t_c: >-
+              {%- if t_ent | string | length > 0 and is_number(states(t_ent)) -%}
+                {%- set v = states(t_ent) | float -%}
+                {%- set u = state_attr(t_ent, 'unit_of_measurement') -%}
+                {%- if u == '°F' -%}{{ ((v - 32) * 5 / 9) | round(1) }}
+                {%- elif u == 'K' -%}{{ (v - 273.15) | round(1) }}
+                {%- else -%}{{ v | round(1) }}{%- endif -%}
+              {%- endif -%}
+            # Humidity in % (capped at 99.9)
+            h_c: >-
+              {%- if h_ent | string | length > 0 and is_number(states(h_ent)) -%}
+                {{ [states(h_ent) | float | round(1), 99.9] | min }}
+              {%- endif -%}
+            # Age of the last report in minutes
+            t_age: >-
+              {%- if t_ent | string | length == 0 or states[t_ent] is none -%}
+                999999
+              {%- else -%}
+                {{ ((now() - states[t_ent].last_reported).total_seconds() / 60) | round(0) }}
+              {%- endif -%}
+            h_age: >-
+              {%- if h_ent | string | length == 0 or states[h_ent] is none -%}
+                999999
+              {%- else -%}
+                {{ ((now() - states[h_ent].last_reported).total_seconds() / 60) | round(0) }}
+              {%- endif -%}
+            # skip = not configured, ok = valid, invalid = configured but not usable
+            t_status: >-
+              {%- if t_ent | string | length == 0 -%}skip
+              {%- elif t_c != '' and -20 <= t_c | float <= 60
+                       and (stale_minutes | int(0) == 0 or t_age | float <= stale_minutes | int(0)) -%}ok
+              {%- else -%}invalid{%- endif -%}
+            h_status: >-
+              {%- if h_ent | string | length == 0 -%}skip
+              {%- elif h_c != '' and 0 <= h_c | float and states(h_ent) | float <= 100
+                       and (stale_minutes | int(0) == 0 or h_age | float <= stale_minutes | int(0)) -%}ok
+              {%- else -%}invalid{%- endif -%}
+        - alias: Temperature
+          choose:
+            - conditions:
+                - condition: template
+                  value_template: "{{ t_status == 'ok' }}"
+              sequence:
+                - if:
+                    - condition: template
+                      value_template: "{{ restore_online and t_fallback != 'none' }}"
+                  then:
+                    - action: mqtt.publish
+                      data:
+                        topic: "{{ set_topic }}"
+                        qos: 1
+                        retain: false
+                        payload: '{{ {"source_" ~ slot ~ "_temperature_state": "online"} | tojson }}'
+                    - delay:
+                        seconds: "{{ write_delay }}"
+                - action: mqtt.publish
+                  data:
+                    topic: "{{ set_topic }}"
+                    qos: 1
+                    retain: false
+                    payload: '{{ {"source_" ~ slot ~ "_temperature": t_c | float} | tojson }}'
+                - delay:
+                    seconds: "{{ write_delay }}"
+            - conditions:
+                - condition: template
+                  value_template: "{{ t_status == 'invalid' and t_fallback != 'none' }}"
+              sequence:
+                - action: mqtt.publish
+                  data:
+                    topic: "{{ set_topic }}"
+                    qos: 1
+                    retain: false
+                    payload: '{{ {"source_" ~ slot ~ "_temperature_state": t_fallback} | tojson }}'
+                - delay:
+                    seconds: "{{ write_delay }}"
+        - alias: Humidity
+          choose:
+            - conditions:
+                - condition: template
+                  value_template: "{{ h_status == 'ok' }}"
+              sequence:
+                - if:
+                    - condition: template
+                      value_template: "{{ restore_online and h_fallback != 'none' }}"
+                  then:
+                    - action: mqtt.publish
+                      data:
+                        topic: "{{ set_topic }}"
+                        qos: 1
+                        retain: false
+                        payload: '{{ {"source_" ~ slot ~ "_humidity_state": "online"} | tojson }}'
+                    - delay:
+                        seconds: "{{ write_delay }}"
+                - action: mqtt.publish
+                  data:
+                    topic: "{{ set_topic }}"
+                    qos: 1
+                    retain: false
+                    payload: '{{ {"source_" ~ slot ~ "_humidity": h_c | float} | tojson }}'
+                - delay:
+                    seconds: "{{ write_delay }}"
+            - conditions:
+                - condition: template
+                  value_template: "{{ h_status == 'invalid' and h_fallback != 'none' }}"
+              sequence:
+                - action: mqtt.publish
+                  data:
+                    topic: "{{ set_topic }}"
+                    qos: 1
+                    retain: false
+                    payload: '{{ {"source_" ~ slot ~ "_humidity_state": h_fallback} | tojson }}'
+                - delay:
+                    seconds: "{{ write_delay }}"
