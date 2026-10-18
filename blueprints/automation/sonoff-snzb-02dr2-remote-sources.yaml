@@ -1,5 +1,5 @@
 # SONOFF SNZB-02DR2 (Zigbee2MQTT) - Remote Sources
-# Version: 1.1.0
+# Version: 1.2.0
 #
 # Author: Riccardo Fiorenza (ricfio)
 # Repository: https://github.com/ricfio/ha-blueprint-sonoff-snzb-02dr2-remote-sources
@@ -7,6 +7,7 @@
 # SPDX-License-Identifier: MIT
 #
 # Changelog
+#   1.2.0  Enable remote sources by default, react to unit changes, and validate unrounded temperatures.
 #   1.1.0  Coalesce source changes, validate units, and restore item state consistently.
 #   1.0.0  First release.
 
@@ -45,7 +46,7 @@ blueprint:
     - Invalid readings use the configured per-item fallback. When enabled, `online` is
       published immediately before a valid value.
 
-    **Version:** 1.1.0
+    **Version:** 1.2.0
   domain: automation
   author: ricfio
   source_url: https://github.com/ricfio/ha-blueprint-sonoff-snzb-02dr2-remote-sources/blob/main/blueprints/automation/sonoff-snzb-02dr2-remote-sources.yaml
@@ -270,11 +271,11 @@ blueprint:
       collapsed: true
       input:
         set_status_using:
-          name: Also set remote_source_status to "using"
+          name: Enable remote sources (required)
           description: >-
-            Off by default: only the temperature/humidity values are written.
-            Enable it only if the display does not show the values on its own.
-          default: false
+            Sets remote_source_status to "using" before sending values,
+            as required by firmware 1.0.5 and later to enable remote sources.
+          default: true
           selector:
             boolean:
         write_delay:
@@ -342,13 +343,15 @@ triggers:
     id: startup
 
 conditions:
-  - alias: Only react to state changes (not attribute changes)
+  - alias: React to state or unit changes, but ignore unrelated attribute changes
     condition: template
     value_template: >-
       {{ trigger.id != 'source_changed'
          or trigger.event.data.old_state is none
          or trigger.event.data.new_state is none
-         or trigger.event.data.new_state.state != trigger.event.data.old_state.state }}
+         or trigger.event.data.new_state.state != trigger.event.data.old_state.state
+         or trigger.event.data.new_state.attributes.unit_of_measurement
+            != trigger.event.data.old_state.attributes.unit_of_measurement }}
 actions:
   - alias: Coalesce source changes and use the latest state
     if:
@@ -391,16 +394,17 @@ actions:
             # Effective fallback of each item: per-item override or the default
             t_fallback: "{{ fallback_mode if repeat.item.t_fb == 'default' else repeat.item.t_fb }}"
             h_fallback: "{{ fallback_mode if repeat.item.h_fb == 'default' else repeat.item.h_fb }}"
-            # Convert only recognized temperature units; unknown or missing units are invalid.
-            t_c: >-
+            # Keep the full precision for range validation; round only for transmission.
+            t_c_raw: >-
               {%- if t_ent | string | length > 0 and is_number(states(t_ent)) -%}
                 {%- set v = states(t_ent) | float -%}
                 {%- set u = state_attr(t_ent, 'unit_of_measurement') | string | trim -%}
-                {%- if u in ['°C', '℃'] -%}{{ v | round(1) }}
-                {%- elif u in ['°F', '℉'] -%}{{ ((v - 32) * 5 / 9) | round(1) }}
-                {%- elif u == 'K' -%}{{ (v - 273.15) | round(1) }}
+                {%- if u in ['°C', '℃'] -%}{{ v }}
+                {%- elif u in ['°F', '℉'] -%}{{ (v - 32) * 5 / 9 }}
+                {%- elif u == 'K' -%}{{ v - 273.15 }}
                 {%- endif -%}
               {%- endif -%}
+            t_c: "{{ t_c_raw | float | round(1) if t_c_raw != '' else '' }}"
             t_unit: "{{ state_attr(t_ent, 'unit_of_measurement') | string | trim }}"
             h_unit: "{{ state_attr(h_ent, 'unit_of_measurement') | string | trim }}"
             # Humidity is accepted only when its unit is percent.
@@ -424,7 +428,7 @@ actions:
             # skip = not configured, ok = valid, invalid = configured but not usable
             t_status: >-
               {%- if t_ent | string | length == 0 -%}skip
-              {%- elif t_c != '' and t_unit in ['°C', '℃', '°F', '℉', 'K'] and -20 <= t_c | float <= 60
+              {%- elif t_c_raw != '' and t_unit in ['°C', '℃', '°F', '℉', 'K'] and -20 <= t_c_raw | float <= 60
                        and (stale_minutes | int(0) == 0 or t_age | float <= stale_minutes | int(0)) -%}ok
               {%- else -%}invalid{%- endif -%}
             h_status: >-

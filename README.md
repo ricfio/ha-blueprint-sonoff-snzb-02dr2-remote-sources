@@ -15,6 +15,7 @@ so they are shown on its display (for example the reading of an outdoor sensor).
 - For each slot: temperature, humidity, or both (every source is optional)
 - Values are validated before being sent: numeric, supported unit, within range, and not stale
 - Fahrenheit and Kelvin temperature sources are converted to °C; unknown units are rejected
+- Changes to a source's value or temperature unit trigger an update; unrelated attribute changes are ignored
 - Configurable fallback for each item when a source is not valid
 - Periodic refresh and a restartable source-change debounce, so bursts send the latest reading
 
@@ -42,8 +43,8 @@ Other firmware versions have not been tested.
    https://github.com/ricfio/ha-blueprint-sonoff-snzb-02dr2-remote-sources/blob/main/blueprints/automation/sonoff-snzb-02dr2-remote-sources.yaml
    ```
 
-   Manual alternative: copy `blueprints/automation/sonoff-snzb-02dr2-remote-sources.yaml`
-   into `<config>/blueprints/automation/` (any subfolder works) and reload.
+Manual alternative: copy `blueprints/automation/sonoff-snzb-02dr2-remote-sources.yaml`
+into `<config>/blueprints/automation/` (any subfolder works) and reload.
 
 2. Open the blueprint and click **Create automation**.
 3. Enter the Zigbee2MQTT name of the display and pick the source sensors for EXT1 and/or EXT2.
@@ -86,14 +87,14 @@ Other firmware versions have not been tested.
 
 | Input | Default | Description |
 |---|---|---|
-| Also set `remote_source_status` to "using" | off | Enable only if the display does not show the values on its own |
+| Set `remote_source_status` to "using" | on | Required to enable remote sources on firmware 1.0.5 and later; sent before the source values |
 | Pause between writes | 2 s | Delay between two consecutive MQTT messages |
 
 ## How it works
 
 The automation runs when:
 
-- the **state** of a configured source changes (attribute-only changes are ignored),
+- the **state** or `unit_of_measurement` of a configured source changes (unrelated attribute-only changes are ignored),
 - the **periodic refresh** fires,
 - **Home Assistant starts**.
 
@@ -108,15 +109,15 @@ Each value is published in its own MQTT message to
 `<base_topic>/<display name>/set` (`source_N_temperature` / `source_N_humidity`), with
 a pause between messages. The order for an item is its optional `online` state followed by
 its value; invalid items receive only the selected fallback state. `remote_source_status`
-is sent first when enabled. QoS 1 and `retain: false` are used for every command.
+is sent first; it is enabled by default. QoS 1 and `retain: false` are used for every command.
 
 A reading is sent only if it is **valid**:
 
 - the state is numeric and not `unknown`/`unavailable`
-- temperature uses °C/℃, °F/℉ or K and converts to -20…60 °C
+- temperature uses °C/℃, °F/℉ or K and converts to -20…60 °C before rounding to one decimal place for transmission
 - humidity uses `%` and is within 0…100 % (100 is sent as the device maximum, 99.9)
 - the state object's `last_reported` time is within the configured maximum age; `0` disables
-  this check. Attribute-only updates do not trigger a run, but are considered when a run occurs.
+  this check. Unrelated attribute-only updates do not trigger a run, but are considered when a run occurs.
 
 ### Fallback
 
@@ -148,13 +149,13 @@ the last displayed reading/state untouched.
 
 - **Nothing changes on the display**
   - Check that the display name matches the Zigbee2MQTT `friendly_name` exactly
-    (case-sensitive) and that the base topic is correct.
+ (case-sensitive) and that the base topic is correct.
   - Check in Zigbee2MQTT that the device exposes the `source_N_*` properties.
   - Look at the automation trace to see which messages were published.
-  - Try enabling *Also set remote_source_status to "using"* in the Advanced section.
+  - Verify that *Set `remote_source_status` to "using"* is enabled in the Advanced section; it is on by default and required for remote sources.
 - **A slot stays empty even though the sensor works**
   - The reading may not be valid: out of range, not numeric, or older than the
-    configured maximum age.
+ configured maximum age.
 
 ## Links
 
@@ -164,16 +165,7 @@ the last displayed reading/state untouched.
 
 ## Changelog
 
-### 1.1.0
-
-- Coalesce rapid source changes and publish the latest state after a configurable quiet period.
-- Reject unsupported/missing measurement units and compare freshness without rounding age.
-- Make recovery `online` state publication independent of whether an item fallback was selected.
-- Clarify MQTT order, QoS, retain behavior, unit requirements, and startup/refresh behavior.
-
-### 1.0.0
-
-- First release.
+See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## License
 
